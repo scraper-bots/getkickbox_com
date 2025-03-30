@@ -24,7 +24,7 @@ The Pareto Principle, also known as the 80/20 rule, suggests that roughly 80% of
 - **20% of the Swift language and iOS frameworks** will enable you to build **80% of most common app functionalities**
 - **20% of your learning time** focused on core concepts will yield **80% of your practical development skills**
 
-<img src="assets/paretto.png" alt="paretto" width="600" height="300">
+<img src="assets/pareto.png" alt="Pareto Principle Visualization" width="600" height="300">
 
 ### Why This Approach Works
 
@@ -47,7 +47,7 @@ This repository is organized into two main phases:
 ```
 ios_fundamentals/
 ├── LICENSE
-├── README.MD           <- You are here: Main overview and roadmap
+├── README.md           <- You are here: Main overview and roadmap
 ├── phase-one/          <- The vital 20%
 │   └── README.md       <- Core Swift and iOS fundamentals
 └── phase-two/          <- The valuable 80%
@@ -80,7 +80,7 @@ Phase Two expands into advanced topics that take your iOS development skills to 
 
 ## 🗺️ Learning Roadmap
 
-![iOS Learning Roadmap](https://via.placeholder.com/800x600?text=iOS+Learning+Roadmap)
+<img src="assets/roadmap.png" alt="iOS Learning Roadmap" width="800">
 
 ### Stage 1: Swift Fundamentals (Weeks 1-2)
 - Variables, types, and control flow
