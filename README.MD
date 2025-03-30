@@ -24,7 +24,7 @@ The Pareto Principle, also known as the 80/20 rule, suggests that roughly 80% of
 - **20% of the Swift language and iOS frameworks** will enable you to build **80% of most common app functionalities**
 - **20% of your learning time** focused on core concepts will yield **80% of your practical development skills**
 
-<img src="assets/paretto.png" alt="Pareto Principle Visualization" width="400" height="300">
+<img src="assets/paretto.png" alt="Pareto Principle Visualization" width="300" height="300">
 
 ### Why This Approach Works
 
