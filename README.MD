@@ -2,7 +2,7 @@
 
 > Learn iOS development efficiently by focusing on the vital 20% first, then expanding to the advanced 80%.
 
-![iOS Learning Curve](assets/curve.png)
+![iOS Learning Curve](<img src="assets/curve.png" width=250 height=200>)
 
 ## 📋 Table of Contents
 
