@@ -80,7 +80,7 @@ Phase Two expands into advanced topics that take your iOS development skills to 
 
 ## 🗺️ Learning Roadmap
 
-<img src="assets/roadmap.png" alt="iOS Learning Roadmap" width="800">
+<img src="assets/roadmap.png" alt="iOS Learning Roadmap" width="500" height="300">
 
 ### Stage 1: Swift Fundamentals (Weeks 1-2)
 - Variables, types, and control flow
