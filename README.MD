@@ -71,7 +71,7 @@ This is where the journey gets really fun because you're building on a solid fou
 
 ## 🗺️ My Recommended Learning Roadmap
 
-<img src="assets/roadmap.png" alt="iOS Learning Roadmap" width="500" height="300">
+<img src="https://miro.medium.com/v2/resize:fit:1400/1*BLmG-ezDPivYXSHBHNyUcQ.png" alt="iOS Learning Roadmap">
 
 Here's how I broke down my learning journey, and I suggest you might do the same:
 
