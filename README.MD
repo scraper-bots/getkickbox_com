@@ -23,7 +23,7 @@ In my iOS learning journey, this translated to:
 - **20% of Swift and iOS knowledge** lets me build **80% of the apps** I wanted to create
 - The remaining 80% of concepts were only needed for specialized or highly optimized apps
 
-<img src="assets/paretto.png" alt="Pareto Principle Visualization" width="300" height="300">
+<img src="https://cdn.slidemodel.com/wp-content/uploads/pareto-principle-what-is-slidemodel.jpg" alt="Pareto Principle Visualization">
 
 Before this realization, I spent weeks stuck in "tutorial hell" - watching video after video without building anything substantial. I'd read about advanced protocols and generics before I could even comfortably create a simple table view.
 
