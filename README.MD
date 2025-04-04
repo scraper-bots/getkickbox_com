@@ -2,7 +2,7 @@
 
 > My journey to learn iOS development efficiently - focusing on the vital 20% first, then expanding to the advanced 80%.
 
-<img src="assets/curve.png" alt="iOS Learning Curve" width="600" height="300">
+<img src="https://en.wikipedia.org/wiki/File:Alanf777_Lcd_fig08.png" alt="iOS Learning Curve" width="600" height="300">
 
 ## Why I Created This Repository
 
