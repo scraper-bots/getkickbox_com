@@ -2,19 +2,21 @@
 """
 main.py
 
-Minimal script that hardcodes the Bearer token so you can run:
+Minimal script, now with automatic attempts to fetch more than the default limit
+by trying larger limits and several common pagination patterns.
 
+Run:
     python3 main.py
 
-Produces:
- - users.csv
- - users.xlsx
-
-Dependencies:
-    pip install requests pandas openpyxl
+Config (edit near the top):
+- TOKEN: your bearer token (hardcoded as requested)
+- MAX_SINGLE_LIMIT: first try to request this many UUIDs in one shot
+- PAGINATION_LIMIT: per-page size to use when paginating (usually same as MAX_SINGLE_LIMIT)
+- SAFE_TOTAL_CAP: maximum total UUIDs to fetch (safety guard)
 """
 
 from __future__ import annotations
+import copy
 import json
 import sys
 from itertools import islice
@@ -24,24 +26,21 @@ import pandas as pd
 import requests
 
 # ----------------- CONFIG: edit these values if needed -----------------
-# Put your token here (hardcoded as requested)
 TOKEN = "eyJraWQiOiIxIiwiYWxnIjoiRWREU0EifQ.eyJpc3MiOiJraWNrYm94LWltcHJvdmUiLCJzdWIiOiJhNjE0ZWZjOC0zMmI4LTRjYjItYjgwYi1iYzRiZDAxOGVkOWQiLCJhdWQiOiJQQVNIQUhvbGRpbmciLCJjb250ZXh0cyI6WyJQQVNIQUhvbGRpbmciXSwiZXhwIjoxNzYwNjc3Mjg1fQ.GXMVeQ8gFXvzsV97V_NQ5adDW27AN-CmHFHbeIsoArKU4UoeXAc8RQnInoK_a_hjgJJ7PoJLCiae5ZGlMC6IDQ"   # <-- replace with your full bearer token string
 
 SEARCH_URL = "https://api.rready.com/PASHAHolding/global-search/users"
 BATCH_URL = "https://api.rready.com/PASHAHolding/users/fetchByBatch"
 
-# Default search payload used by your example
-SEARCH_PAYLOAD = {
-    "query": "*",
-    "order": {"field": "firstName.keyword", "direction": "DESC"},
-    "where": [
-        {"field": "deleted", "match": [False], "matchMode": "EQUAL"},
-        {"field": "enabled", "match": [True], "matchMode": "EQUAL"},
-    ],
-    "limit": 500,
-}
+# Try a larger single-request limit first (increase if you want)
+MAX_SINGLE_LIMIT = 2000     # first attempt requesting up to this many UUIDs in one shot
 
-# How many UUIDs to send per batch request to /fetchByBatch
+# When paginating, use this page size per request
+PAGINATION_LIMIT = 1000     # per-request page size when using offset/page strategies
+
+# Safety cap to avoid infinite loops / accidental huge fetches
+SAFE_TOTAL_CAP = 20000      # stop after fetching this many UUIDs
+
+# How many UUIDs to send per /fetchByBatch call
 BATCH_SIZE = 100
 
 # Output filenames
@@ -76,7 +75,6 @@ def normalize_users(users: List[Dict]) -> pd.DataFrame:
             if isinstance(v, dict):
                 flat.update(flatten_dict(v, parent=k))
             elif isinstance(v, list):
-                # simple lists -> comma-joined; complex -> json string
                 if all(not isinstance(x, (dict, list)) for x in v):
                     flat[k] = ", ".join(str(x) for x in v)
                 else:
@@ -96,6 +94,166 @@ def normalize_users(users: List[Dict]) -> pd.DataFrame:
     df = pd.DataFrame([{k: r.get(k, "") for k in ordered} for r in rows])
     return df
 
+def try_post(session: requests.Session, url: str, payload: Dict, timeout: int = 30):
+    try:
+        resp = session.post(url, json=payload, timeout=timeout)
+    except Exception as e:
+        print(f"Network error when calling {url}: {e}")
+        return None
+    return resp
+
+def fetch_uuids_smart(session: requests.Session, base_payload: Dict) -> List[str]:
+    """
+    Try to fetch UUID list, using larger limit and common pagination strategies automatically.
+    Returns deduplicated list of UUID strings.
+    """
+    uuids_acc: List[str] = []
+
+    payload = copy.deepcopy(base_payload)
+
+    # 1) Try a single large request first
+    payload_single = copy.deepcopy(payload)
+    payload_single["limit"] = MAX_SINGLE_LIMIT
+    print(f"Attempting single request with limit={MAX_SINGLE_LIMIT} ...")
+    resp = try_post(session, SEARCH_URL, payload_single)
+    if resp is None:
+        sys.exit(2)
+    if resp.status_code == 401:
+        print("Unauthorized (401). Token invalid or expired.")
+        sys.exit(3)
+    if resp.status_code != 200:
+        print(f"Search endpoint returned {resp.status_code}: {resp.text[:300]}")
+        sys.exit(4)
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        print("Failed to parse JSON from search response:", e)
+        sys.exit(5)
+
+    if not isinstance(data, list):
+        print("Search response format unexpected (expected list of UUIDs).")
+        sys.exit(6)
+
+    uuids_acc.extend([u for u in data if isinstance(u, str) and u.strip()])
+    print(f"Single request returned {len(data)} UUIDs.")
+
+    # If single returned fewer than requested limit, assume all results retrieved.
+    if len(data) < MAX_SINGLE_LIMIT:
+        print("Less than limit returned — assuming complete. Continuing.")
+        return dedupe_preserve_order(uuids_acc)
+
+    # Otherwise we may have more. Try several pagination strategies.
+    print("Response length equals requested limit — trying pagination strategies to fetch more...")
+
+    # Strategy A: offset-style pagination using keys like 'offset', 'start', 'from'
+    offset_keys = ["offset", "start", "from"]
+    for key in offset_keys:
+        print(f"Trying offset-style pagination with key='{key}', page_size={PAGINATION_LIMIT} ...")
+        collected = list(uuids_acc)  # already have first batch; note the first batch corresponds to offset 0 only if server respects 'limit'
+        offset = len(data)  # start from what we just received
+        # We'll page until no more or until SAFE_TOTAL_CAP
+        while True:
+            if len(collected) >= SAFE_TOTAL_CAP:
+                print(f"Reached safe cap {SAFE_TOTAL_CAP}; stopping offset pagination.")
+                break
+            payload_page = copy.deepcopy(payload)
+            payload_page["limit"] = PAGINATION_LIMIT
+            payload_page[key] = offset
+            resp_page = try_post(session, SEARCH_URL, payload_page)
+            if resp_page is None:
+                break
+            if resp_page.status_code != 200:
+                print(f"Offset pagination ({key}) returned {resp_page.status_code}; aborting this strategy.")
+                break
+            try:
+                page_data = resp_page.json()
+            except Exception as e:
+                print("Failed to parse JSON during offset pagination:", e)
+                break
+            if not isinstance(page_data, list) or len(page_data) == 0:
+                print(f"No more results for offset key '{key}'.")
+                break
+            collected.extend([u for u in page_data if isinstance(u, str) and u.strip()])
+            print(f"  got {len(page_data)} uuids (total collected {len(collected)})")
+            if len(page_data) < PAGINATION_LIMIT:
+                print("  Last page smaller than page_size -> finishing offset pagination.")
+                break
+            offset += len(page_data)
+
+        if len(collected) > len(uuids_acc):
+            print(f"Offset-style with key='{key}' retrieved additional UUIDs (total {len(collected)}).")
+            uuids_acc = collected
+            return dedupe_preserve_order(uuids_acc)
+        else:
+            print(f"No extra UUIDs found using key='{key}'. Trying next strategy...")
+
+    # Strategy B: page-based pagination with 'page' + 'size' or 'page' + 'limit'
+    print("Trying page-based pagination (page + size / page + limit)...")
+    for page_key in ["page"]:
+        for size_key in ["size", "limit"]:
+            collected = list(uuids_acc)
+            page = 1  # sometimes page starts at 0, sometimes 1; we'll try both variants
+            for start_page in (0, 1):
+                collected = list(uuids_acc)
+                page = start_page
+                while True:
+                    if len(collected) >= SAFE_TOTAL_CAP:
+                        print(f"Reached safe cap {SAFE_TOTAL_CAP}; stopping page-based pagination.")
+                        break
+                    payload_page = copy.deepcopy(payload)
+                    payload_page[size_key] = PAGINATION_LIMIT
+                    payload_page[page_key] = page
+                    resp_page = try_post(session, SEARCH_URL, payload_page)
+                    if resp_page is None or resp_page.status_code != 200:
+                        break
+                    try:
+                        page_data = resp_page.json()
+                    except Exception:
+                        break
+                    if not isinstance(page_data, list) or len(page_data) == 0:
+                        break
+                    collected.extend([u for u in page_data if isinstance(u, str) and u.strip()])
+                    print(f"  page {page} got {len(page_data)} uuids (total {len(collected)})")
+                    if len(page_data) < PAGINATION_LIMIT:
+                        break
+                    page += 1
+
+                if len(collected) > len(uuids_acc):
+                    print(f"Page-based pagination (page start {start_page}, size_key '{size_key}') retrieved extra UUIDs ({len(collected)})")
+                    uuids_acc = collected
+                    return dedupe_preserve_order(uuids_acc)
+
+    # If nothing worked, as a last resort try requesting an even larger single limit (but bounded)
+    LAST_RESORT_LIMIT = min(5000, SAFE_TOTAL_CAP)
+    if LAST_RESORT_LIMIT > MAX_SINGLE_LIMIT:
+        print(f"Last resort: trying larger single request limit={LAST_RESORT_LIMIT} ...")
+        payload_last = copy.deepcopy(payload)
+        payload_last["limit"] = LAST_RESORT_LIMIT
+        resp_last = try_post(session, SEARCH_URL, payload_last)
+        if resp_last and resp_last.status_code == 200:
+            try:
+                last_data = resp_last.json()
+                if isinstance(last_data, list) and len(last_data) > len(uuids_acc):
+                    uuids_acc = [u for u in last_data if isinstance(u, str) and u.strip()]
+                    print(f"Last-resort request returned {len(uuids_acc)} UUIDs.")
+                    return dedupe_preserve_order(uuids_acc)
+            except Exception:
+                pass
+
+    # Give up and return whatever we have (deduped)
+    print("Pagination strategies exhausted. Returning collected UUIDs (may be partial).")
+    return dedupe_preserve_order(uuids_acc)
+
+def dedupe_preserve_order(seq: List[str]) -> List[str]:
+    seen = set()
+    out = []
+    for x in seq:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
 def main():
     if not TOKEN or TOKEN.startswith("eyJYOUR"):
         print("ERROR: Please open main.py and set TOKEN to your Bearer token string.")
@@ -105,49 +263,36 @@ def main():
         "Authorization": f"Bearer {TOKEN}",
         "Content-Type": "application/json",
         "Accept": "application/json",
-        # If you normally use app-id header, enable it here:
-        # "app-id": "app",
     }
 
     session = requests.Session()
     session.headers.update(headers)
 
-    print("1) Requesting UUIDs from search endpoint...")
-    try:
-        r = session.post(SEARCH_URL, json=SEARCH_PAYLOAD, timeout=30)
-    except Exception as e:
-        print("Network error when calling search endpoint:", e)
-        sys.exit(2)
+    # Base search payload: same as your original example
+    base_payload = {
+        "query": "*",
+        "order": {"field": "firstName.keyword", "direction": "DESC"},
+        "where": [
+            {"field": "deleted", "match": [False], "matchMode": "EQUAL"},
+            {"field": "enabled", "match": [True], "matchMode": "EQUAL"},
+        ],
+        # limit will be controlled by our fetching function
+    }
 
-    if r.status_code == 401:
-        print("Unauthorized (401). Token invalid or expired.")
-        sys.exit(3)
-    if r.status_code != 200:
-        print(f"Search endpoint returned {r.status_code}: {r.text[:300]}")
-        sys.exit(4)
+    print("1) Fetching UUIDs (smart fetch with pagination attempts)...")
+    uuids = fetch_uuids_smart(session, base_payload)
+    if not uuids:
+        print("No UUIDs found. Exiting.")
+        sys.exit(0)
 
-    try:
-        uuids = r.json()
-    except Exception as e:
-        print("Failed to parse JSON from search response:", e)
-        sys.exit(5)
+    print(f"Total UUIDs collected: {len(uuids)} (capped at SAFE_TOTAL_CAP = {SAFE_TOTAL_CAP})")
+    if len(uuids) >= SAFE_TOTAL_CAP:
+        print("WARNING: reached safe cap — there may be more records on the server.")
 
-    if not isinstance(uuids, list) or len(uuids) == 0:
-        print("Search did not return UUID list or returned empty list.")
-        sys.exit(6)
-
-    # dedupe preserving order
-    seen = set()
-    deduped = []
-    for u in uuids:
-        if u not in seen:
-            seen.add(u)
-            deduped.append(u)
-
-    print(f"Found {len(deduped)} UUIDs. Fetching users in batches of {BATCH_SIZE}...")
-
+    # Now fetch full user objects in batches
+    print(f"2) Fetching user objects in batches of {BATCH_SIZE} ...")
     all_users: List[Dict] = []
-    for idx, chunk in enumerate(chunked_iterable(deduped, BATCH_SIZE), start=1):
+    for idx, chunk in enumerate(chunked_iterable(uuids, BATCH_SIZE), start=1):
         payload = {"targets": chunk}
         try:
             resp = session.post(BATCH_URL, json=payload, timeout=60)
@@ -189,8 +334,7 @@ def main():
     print(f"Writing Excel -> {XLSX_OUTPUT}")
     df.to_excel(XLSX_OUTPUT, index=False)
 
-    print("Done.")
-    print("Created files:")
+    print("Done. Created files:")
     print(" -", CSV_OUTPUT)
     print(" -", XLSX_OUTPUT)
 
